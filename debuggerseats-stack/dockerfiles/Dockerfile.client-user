@@ -1,0 +1,16 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+RUN corepack enable && corepack prepare pnpm@9 --activate
+
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+COPY . .
+
+ENV EXPO_NO_TELEMETRY=1
+
+EXPOSE 8081 19000 19001 19002
+
+CMD ["sh", "-c", "CI=true pnpm install --frozen-lockfile && pnpm exec expo start --tunnel -c"]
