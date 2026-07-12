@@ -1,0 +1,249 @@
+name: debuggers-eats
+
+services:
+
+  mongodb:
+    image: mongo:7
+    container_name: debuggerseats_mongodb
+    restart: unless-stopped
+    ports:
+      - "${MONGODB_PORT:-27020}:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - debuggerseats-network
+
+  postgres:
+    image: postgres:13
+    container_name: debuggerseats_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-IN6AM}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Admin!}
+      POSTGRES_DB: ${POSTGRES_DB:-debuggers_eats}
+    ports:
+      - "${POSTGRES_PORT:-5438}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-IN6AM} -d ${POSTGRES_DB:-debuggers_eats}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - debuggerseats-network
+
+  redis:
+    image: redis:alpine
+    container_name: debuggerseats_redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - debuggerseats-network
+
+  auth-service:
+    build:
+      context: ../authenthication_server
+      dockerfile: ../debuggerseats-stack/dockerfiles/Dockerfile.auth-service
+    container_name: debuggerseats_auth
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    environment:
+      PORT: 3013
+      URI_MONGODB: mongodb://mongodb:27017/auth-de-debuggers
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ISSUER: ${JWT_ISSUER}
+      JWT_AUDIENCE: ${JWT_AUDIENCE}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1d}
+      EMAIL_USER: ${EMAIL_USER}
+      EMAIL_PASS: ${EMAIL_PASS}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      CHOKIDAR_USEPOLLING: "true"
+    env_file:
+      - path: .env.docker
+        required: false
+    volumes:
+      - ../authenthication_server:/app
+      - auth_node_modules:/app/node_modules
+    ports:
+      - "3013:3013"
+    command: sh -c "CI=true pnpm install --frozen-lockfile && node_modules/.bin/nodemon --legacy-watch index.js"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3013/debuggersEatsAdmin/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - debuggerseats-network
+
+  restaurant-service:
+    build:
+      context: ../add-restaurant-service
+      dockerfile: ../debuggerseats-stack/dockerfiles/Dockerfile.restaurant-service
+    container_name: debuggerseats_restaurants
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    environment:
+      PORT: 3014
+      URI_MONGODB: mongodb://mongodb:27017/auth-de-debuggers
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ISSUER: ${JWT_ISSUER}
+      JWT_AUDIENCE: ${JWT_AUDIENCE}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1d}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET}
+      CLOUDINARY_BASE_URL: ${CLOUDINARY_BASE_URL}
+      CLOUDINARY_RESTAURANTS_FOLDER: ${CLOUDINARY_RESTAURANTS_FOLDER:-restaurants}
+      CLOUDINARY_MENU_FOLDER: ${CLOUDINARY_MENU_FOLDER:-menu}
+      CHOKIDAR_USEPOLLING: "true"
+    env_file:
+      - path: .env.docker
+        required: false
+    volumes:
+      - ../add-restaurant-service:/app
+      - restaurant_node_modules:/app/node_modules
+    ports:
+      - "3014:3014"
+    command: sh -c "CI=true pnpm install --frozen-lockfile && node_modules/.bin/nodemon --legacy-watch index.js"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3014/add-restaurant/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - debuggerseats-network
+
+  reports-service:
+    build:
+      context: ../reports-service
+      dockerfile: ../debuggerseats-stack/dockerfiles/Dockerfile.reports-service
+    container_name: debuggerseats_reports
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:5000
+      ConnectionStrings__MongoDB: mongodb://mongodb:27017
+      ConnectionStrings__PostgreSQL: >-
+        Host=postgres;Database=${POSTGRES_DB:-debuggers_eats};
+        Username=${POSTGRES_USER:-IN6AM};Password=${POSTGRES_PASSWORD:-Admin!};Port=5432
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:5000/api/reports/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - debuggerseats-network
+
+  client-admin:
+    build:
+      context: ../client-admin
+      dockerfile: ../debuggerseats-stack/dockerfiles/Dockerfile.client-admin
+    container_name: debuggerseats_client_admin
+    restart: unless-stopped
+    depends_on:
+      auth-service:
+        condition: service_healthy
+      restaurant-service:
+        condition: service_healthy
+      reports-service:
+        condition: service_healthy
+    environment:
+      VITE_AUTH_URL: ${VITE_AUTH_URL:-http://localhost:3013/debuggersEatsAdmin/v1}
+      VITE_RESTAURANT_URL: ${VITE_RESTAURANT_URL:-http://localhost:3014/add-restaurant/v1}
+      VITE_REPORTS_URL: ${VITE_REPORTS_URL:-http://localhost:5000}
+      CHOKIDAR_USEPOLLING: "true"
+    env_file:
+      - path: .env.docker
+        required: false
+    volumes:
+      - ../client-admin:/app
+      - client_admin_node_modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    command: sh -c "CI=true pnpm install --frozen-lockfile && node_modules/.bin/vite --host 0.0.0.0 --port 5173"
+    networks:
+      - debuggerseats-network
+
+  client-user:
+    build:
+      context: ../client-user
+      dockerfile: ../debuggerseats-stack/dockerfiles/Dockerfile.client-user
+    container_name: debuggerseats_client_user
+    restart: unless-stopped
+    depends_on:
+      auth-service:
+        condition: service_healthy
+      restaurant-service:
+        condition: service_healthy
+      reports-service:
+        condition: service_healthy
+    environment:
+      EXPO_PUBLIC_AUTH_URL: ${EXPO_PUBLIC_AUTH_URL:-http://localhost:3013/debuggersEatsAdmin/v1}
+      EXPO_PUBLIC_RESTAURANT_URL: ${EXPO_PUBLIC_RESTAURANT_URL:-http://localhost:3014/add-restaurant/v1}
+      EXPO_PUBLIC_REPORTS_URL: ${EXPO_PUBLIC_REPORTS_URL:-http://localhost:5000}
+    env_file:
+      - path: .env.docker
+        required: false
+    volumes:
+      - ../client-user:/app
+      - client_user_node_modules:/app/node_modules
+    ports:
+      - "8081:8081"
+      - "19000:19000"
+      - "19001:19001"
+      - "19002:19002"
+    stdin_open: true
+    tty: true
+    command: sh -c "CI=true pnpm install --frozen-lockfile && pnpm exec expo start --tunnel -c"
+    networks:
+      - debuggerseats-network
+
+networks:
+  debuggerseats-network:
+    driver: bridge
+
+volumes:
+  mongo_data:
+  postgres_data:
+  redis_data:
+  auth_node_modules:
+  restaurant_node_modules:
+  client_admin_node_modules:
+  client_user_node_modules:
