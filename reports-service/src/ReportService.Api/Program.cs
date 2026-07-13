@@ -37,6 +37,10 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
+var port = Environment.GetEnvironmentVariable("PORT") ?? "5000";
+app.Urls.Clear();
+app.Urls.Add($"http://0.0.0.0:{port}");
+
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ReportsDbContext>();
