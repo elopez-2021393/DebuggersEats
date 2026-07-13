@@ -43,10 +43,14 @@ export const createUserRecord = async ({ userData }) => {
         );
     }
 
-    sendActivationEmail(user.email, activationToken, user.firstName)
-        .catch(err => console.error('Error al enviar email de activación:', err));
+    try {
+        await sendActivationEmail(user.email, activationToken, user.firstName);
+    } catch (err) {
+        console.error('Error al enviar email de activación:', err);
+    }
 
     const userObject = user.toObject();
+
     delete userObject.password;
     delete userObject.activationToken;
     return userObject;
@@ -65,10 +69,14 @@ export const registerUserRecord = async ({ userData }) => {
     });
     await user.save();
 
-    sendActivationEmail(user.email, activationToken, user.firstName)
-        .catch(err => console.error('Error al enviar email de activación:', err));
+    try {
+        await sendActivationEmail(user.email, activationToken, user.firstName);
+    } catch (err) {
+        console.error('Error al enviar email de activación:', err);
+    }
 
     const userObject = user.toObject();
+
     delete userObject.password;
     delete userObject.activationToken;
     return userObject;

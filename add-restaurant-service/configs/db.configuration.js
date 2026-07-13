@@ -1,10 +1,15 @@
 import mongoose from "mongoose";
 
-export const dbConnection = async() =>{
+let cachedConnection = null;
+
+export const dbConnection = async () => {
+    if (cachedConnection && mongoose.connection.readyState === 1) {
+        return cachedConnection;
+    }
+
     try{
         mongoose.connection.on('error', ()=>{
             console.error(`Mongo DB | Error de conexión`);
-            mongoose.disconnect();
         });
         mongoose.connection.on('connecting', ()=>{
             console.log(`Mongo DB | Intentando conectar a mongo DB`);
@@ -21,28 +26,14 @@ export const dbConnection = async() =>{
         mongoose.connection.on('disconnected', ()=>{
             console.log(`Mongo DB | Desconectado de mongo DB`);
         });
-        await mongoose.connect(process.env.URI_MONGODB, {
+        cachedConnection = await mongoose.connect(process.env.URI_MONGODB, {
             serverSelectionTimeoutMS: 5000,
             maxPoolSize: 10,
         });
+        return cachedConnection;
     }catch(err){
         console.error(`DebuggersEats - Error al conectar la db: ${err.message}`);
-        process.exit(1);
+        cachedConnection = null;
+        throw err;
     }//try-cath
 };//Funcion para conexion a la base de datos.
-
-const gracefulShutdown = async(signal)=>{
-    console.log(`Mongo DB | Recibida señal de ${signal}, cerrando conexión a mongo DB...`);
-    try{
-        await mongoose.disconnect();
-        console.log(`Mongo DB | Conexión cerrada exitosamente`);
-        process.exit(0);
-    }catch(err){
-        console.error(`Mongo DB | Error durante el cierre de la conexión: ${err.message}`);
-        process.exit(1);
-    }//try-cacth
-}// Cerrar sesion
-
-process.on('SIGINT', ()=>gracefulShutdown('SIGINT'));
-process.on('SIGTERM', ()=> gracefulShutdown('SIGTERM'));
-process.on('SIGUSR2', ()=> gracefulShutdown('SIGUSR2'));
