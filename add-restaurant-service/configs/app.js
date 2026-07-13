@@ -20,6 +20,22 @@ const BASE_PATH = '/add-restaurant/v1';
 
 const routes = (app) => {
 
+    app.get('/', (req, res) => {
+        res.status(200).json({
+            success: true,
+            service: 'Add Restaurant Service',
+            version: '1.0.0',
+            status: 'online',
+            message: 'API en línea. Usa los endpoints documentados abajo.',
+            endpoints: {
+                health: `${BASE_PATH}/health`,
+                restaurants: `${BASE_PATH}/restaurants`,
+                docs: `${BASE_PATH}/api-docs`//Hola
+            },
+            timestamp: new Date().toISOString()
+        });
+    });
+
     app.use(`${BASE_PATH}/restaurants`, restaurantRoutes);
     app.use(`${BASE_PATH}/menu`, menuRoutes);
     app.use(`${BASE_PATH}/orders`, orderRoutes);
@@ -52,27 +68,31 @@ const middlewares = (app) => {
     app.use(express.urlencoded({ extended: true }));
 };
 
-export const initServer = async () => {
+let dbReady = false;
 
+// Construye y devuelve la app de Express (síncrono, apto para exportar en Vercel)
+export const buildApp = () => {
     const app = express();
-    const PORT = process.env.PORT;
-
     app.set('trust proxy', 1);
 
-    try {
-        middlewares(app);
-        await dbConnection();
-        routes(app);
-        //app.use(errorHandler);
+    middlewares(app);
 
-        app.listen(PORT, () => {
-            console.log(`Add Restaurant Service running on port ${PORT}`);
-            console.log(`Health check endpoint: http://localhost:${PORT}${BASE_PATH}/health`);
-            console.log(`Swagger docs: http://localhost:${PORT}${BASE_PATH}/api-docs`);
-        });
+    // Garantiza conexión a Mongo (cacheada) antes de resolver cualquier ruta
+    app.use(async (req, res, next) => {
+        try {
+            await dbConnection();
+            dbReady = true;
+            next();
+        } catch (e) {
+            res.status(503).json({
+                success: false,
+                message: 'No se pudo conectar a la base de datos'
+            });
+        }
+    });
 
-    } catch (err) {
-        console.error(`Add Restaurant Service - Error al iniciar el servidor: ${err.message}`);
-        process.exit(1);
-    }
+    routes(app);
+    // app.use(errorHandler);
+
+    return app;
 };
